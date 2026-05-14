@@ -2,6 +2,11 @@
 name = "diskcache"
 version = "0.1.0"
 edition = "2024"
+description = "Rust disk-backed cache."
+license = "MIT"
+repository = "https://github.com/miaobuao/diskcache-rs"
+homepage = "https://github.com/miaobuao/diskcache-rs"
+documentation = "https://docs.rs/diskcache"
 
 [dependencies]
 blake3 = "1.8.2"
