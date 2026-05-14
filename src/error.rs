@@ -10,6 +10,8 @@ pub enum DiskCacheError {
     Serialize(String),
     #[error("deserialize error: {0}")]
     Deserialize(String),
+    #[error("invalid namespace name: {0}")]
+    InvalidNamespaceName(String),
     #[error("blob is missing: {0}")]
     BlobMissing(PathBuf),
     #[error("corrupt blob data at {path:?}: expected checksum {expected}, got {actual}")]

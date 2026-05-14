@@ -6,6 +6,8 @@ use fjall::compaction::filter::{CompactionFilter, Context, Factory, ItemAccessor
 use crate::codec;
 use crate::envelope::RecordEnvelope;
 
+pub type FilterFactorySelector = Arc<dyn Fn(&str) -> Option<Arc<dyn Factory>> + Send + Sync>;
+
 #[derive(Debug)]
 pub struct TtlFilterFactory;
 
@@ -42,11 +44,9 @@ impl CompactionFilter for TtlFilter {
     }
 }
 
-pub fn make_factory_selector(
-    keyspace_name: &'static str,
-) -> Arc<dyn Fn(&str) -> Option<Arc<dyn Factory>> + Send + Sync> {
+pub fn make_factory_selector(keyspace_name_prefix: &'static str) -> FilterFactorySelector {
     Arc::new(move |name: &str| {
-        if name == keyspace_name {
+        if name.starts_with(keyspace_name_prefix) {
             Some(Arc::new(TtlFilterFactory))
         } else {
             None

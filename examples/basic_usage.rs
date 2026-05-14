@@ -1,7 +1,7 @@
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use diskcache::{DiskCache, DiskCacheConfig};
+use diskcache::{DiskCache, NamespaceConfig};
 use rkyv::{Archive, Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Archive, Serialize, Deserialize)]
@@ -16,19 +16,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
     ));
 
-    let cache = DiskCache::open(&cache_dir, DiskCacheConfig::default())?;
+    let cache = DiskCache::open(&cache_dir)?;
+    let users = cache.namespace("users", NamespaceConfig::default())?;
 
     let profile = UserProfile {
         name: "alice".to_string(),
         score: 42,
     };
 
-    cache.set("user:1", &profile, None)?;
-    let loaded: Option<UserProfile> = cache.get("user:1")?;
+    users.set("1", &profile, None)?;
+    let loaded: Option<UserProfile> = users.get("1")?;
 
     println!("Loaded profile: {loaded:?}");
 
-    cache.remove("user:1")?;
+    users.remove("1")?;
     cache.persist()?;
 
     let _ = fs::remove_dir_all(&cache_dir);
