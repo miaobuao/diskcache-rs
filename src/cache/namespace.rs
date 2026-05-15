@@ -37,16 +37,7 @@ impl CacheNamespace {
         });
         let encoded_record = codec::serialize_value(&record)?;
 
-        let old_record = self
-            .keyspace
-            .get(key_bytes)?
-            .and_then(|v| codec::deserialize_value::<RecordEnvelope>(&v).ok());
-
         self.keyspace.insert(key_bytes, encoded_record)?;
-
-        if let Some(old) = old_record {
-            self.maybe_delete_old_blob(old.as_v1().value.clone(), &record.as_v1().value);
-        }
 
         Ok(())
     }
@@ -71,25 +62,9 @@ impl CacheNamespace {
             return Ok(None);
         }
 
-        let payload = match &record_v1.value {
-            StoredValueV1::Inline { bytes } => bytes.clone(),
-            StoredValueV1::BlobRef {
-                rel_path,
-                len,
-                checksum,
-            } => {
-                let bytes = self.blob_store.read_blob(rel_path, *checksum)?;
-                if bytes.len() as u64 != *len {
-                    return Err(DiskCacheError::Deserialize(format!(
-                        "blob length mismatch for {rel_path}: expected {len}, got {}",
-                        bytes.len()
-                    )));
-                }
-                bytes
-            }
-        };
+        let StoredValueV1::Inline { bytes } = &record_v1.value;
 
-        let value = codec::deserialize_value::<V>(&payload)?;
+        let value = codec::deserialize_value::<V>(bytes)?;
         Ok(Some(value))
     }
 
@@ -97,20 +72,7 @@ impl CacheNamespace {
     where
         K: AsRef<[u8]>,
     {
-        let key_bytes = key.as_ref();
-        let old_record = self
-            .keyspace
-            .get(key_bytes)?
-            .and_then(|v| codec::deserialize_value::<RecordEnvelope>(&v).ok());
-
-        self.keyspace.remove(key_bytes)?;
-
-        if let Some(old) = old_record
-            && let Some(rel_path) = extract_blob_path(&old.as_v1().value)
-        {
-            self.blob_store.delete_blob_best_effort(rel_path);
-        }
-
+        self.keyspace.remove(key.as_ref())?;
         Ok(())
     }
 
@@ -141,35 +103,5 @@ impl CacheNamespace {
         }
 
         Ok(count)
-    }
-
-    pub fn blob_root(&self) -> &Path {
-        self.blob_store.root_dir()
-    }
-
-    pub fn blob_path_for_key<K>(&self, key: K) -> PathBuf
-    where
-        K: AsRef<[u8]>,
-    {
-        self.blob_store
-            .blob_full_path(&crate::blob_store::build_rel_path(key.as_ref()))
-    }
-
-    fn maybe_delete_old_blob(&self, old: StoredValueV1, new: &StoredValueV1) {
-        let Some(old_rel_path) = extract_blob_path(&old) else {
-            return;
-        };
-
-        match new {
-            StoredValueV1::BlobRef { rel_path, .. } if rel_path == old_rel_path => {}
-            _ => self.blob_store.delete_blob_best_effort(old_rel_path),
-        }
-    }
-}
-
-fn extract_blob_path(value: &StoredValueV1) -> Option<&str> {
-    match value {
-        StoredValueV1::BlobRef { rel_path, .. } => Some(rel_path.as_str()),
-        StoredValueV1::Inline { .. } => None,
     }
 }

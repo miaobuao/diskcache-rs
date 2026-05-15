@@ -31,14 +31,7 @@ struct RecordV1 {
 
 #[derive(Debug, Clone, Archive, Serialize, Deserialize)]
 enum StoredValueV1 {
-    Inline {
-        bytes: Vec<u8>,
-    },
-    BlobRef {
-        rel_path: String,
-        len: u64,
-        checksum: u32,
-    },
+    Inline { bytes: Vec<u8> },
 }
 
 impl RecordEnvelope {
@@ -53,9 +46,7 @@ fn serialize_value<T>(value: &T) -> Vec<u8>
 where
     T: for<'a> Serialize<HighSerializer<AlignedVec, ArenaHandle<'a>, Error>>,
 {
-    rkyv::to_bytes::<Error>(value)
-        .expect("serialize")
-        .to_vec()
+    rkyv::to_bytes::<Error>(value).expect("serialize").to_vec()
 }
 
 fn deserialize_value<T>(bytes: &[u8]) -> T
@@ -78,10 +69,7 @@ fn encode_record(value: &str) -> Vec<u8> {
 
 fn decode_record_value(bytes: &[u8]) -> String {
     let record: RecordEnvelope = deserialize_value(bytes);
-    let payload = match &record.as_v1().value {
-        StoredValueV1::Inline { bytes } => bytes.as_slice(),
-        StoredValueV1::BlobRef { .. } => panic!("unexpected blob ref in fjall_raw_bench"),
-    };
+    let StoredValueV1::Inline { bytes: payload } = &record.as_v1().value;
     deserialize_value::<String>(payload)
 }
 
@@ -128,7 +116,7 @@ impl RawInline {
 // ---------------------------------------------------------------------------
 // RawKVSep — fjall's built-in key-value separation, configurable threshold.
 //
-//   RawKVSep::open(path, 64)   → threshold 64 B, mirrors diskcache blob case
+//   RawKVSep::open(path, 64)   -> threshold 64 B, mirrors diskcache large-value case
 //   RawKVSep::open(path, 1024) → threshold 1 KiB, fjall's default
 // ---------------------------------------------------------------------------
 
@@ -148,7 +136,11 @@ impl RawKVSep {
                 ))
             })
             .expect("open kv-sep partition");
-        Self { _db: db, partition, threshold: separation_threshold }
+        Self {
+            _db: db,
+            partition,
+            threshold: separation_threshold,
+        }
     }
 
     fn label(&self) -> String {
@@ -170,7 +162,6 @@ impl RawKVSep {
             .expect("get")
             .map(|v| decode_record_value(v.as_ref()))
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -200,30 +191,30 @@ fn bench_set(c: &mut Criterion) {
     );
     append_inline_group.finish();
 
-    // --- set_new_key/blob — two KVSep variants in the same group ---
-    let mut append_blob_group = c.benchmark_group("set_new_key/blob");
-    append_blob_group.measurement_time(Duration::from_secs(8));
-    let append_blob_value = "y".repeat(128 * 1024);
-    append_blob_group.throughput(Throughput::Bytes(append_blob_value.len() as u64));
-    let mut append_blob_index = 0_u64;
+    // --- set_new_key/kv_sep — two KVSep variants in the same group ---
+    let mut append_kv_sep_group = c.benchmark_group("set_new_key/kv_sep");
+    append_kv_sep_group.measurement_time(Duration::from_secs(8));
+    let append_kv_sep_value = "y".repeat(128 * 1024);
+    append_kv_sep_group.throughput(Throughput::Bytes(append_kv_sep_value.len() as u64));
+    let mut append_kv_sep_index = 0_u64;
 
     for threshold in [64_u32, 1024] {
-        let dir = tempfile::tempdir().expect("create append blob tempdir");
+        let dir = tempfile::tempdir().expect("create append kv_sep tempdir");
         let cache = RawKVSep::open(dir.path(), threshold);
         let label = cache.label();
-        append_blob_group.bench_function(
-            BenchmarkId::new(&label, append_blob_value.len()),
+        append_kv_sep_group.bench_function(
+            BenchmarkId::new(&label, append_kv_sep_value.len()),
             |b| {
                 b.iter(|| {
-                    append_blob_index = append_blob_index.wrapping_add(1);
-                    let key = format!("blob-append-{append_blob_index}");
-                    cache.set(black_box(key.as_bytes()), black_box(&append_blob_value));
+                    append_kv_sep_index = append_kv_sep_index.wrapping_add(1);
+                    let key = format!("kv_sep-append-{append_kv_sep_index}");
+                    cache.set(black_box(key.as_bytes()), black_box(&append_kv_sep_value));
                 })
             },
         );
         drop(dir);
     }
-    append_blob_group.finish();
+    append_kv_sep_group.finish();
 
     // --- set_overwrite/inline ---
     let mut overwrite_inline_group = c.benchmark_group("set_overwrite/inline");
@@ -244,46 +235,51 @@ fn bench_set(c: &mut Criterion) {
         |b| {
             b.iter(|| {
                 overwrite_inline_index = overwrite_inline_index.wrapping_add(1);
-                let key = &overwrite_inline_keys
-                    [overwrite_inline_index % overwrite_inline_keys.len()];
-                overwrite_inline_cache
-                    .set(black_box(key.as_bytes()), black_box(&overwrite_inline_value));
+                let key =
+                    &overwrite_inline_keys[overwrite_inline_index % overwrite_inline_keys.len()];
+                overwrite_inline_cache.set(
+                    black_box(key.as_bytes()),
+                    black_box(&overwrite_inline_value),
+                );
             })
         },
     );
     overwrite_inline_group.finish();
 
-    // --- set_overwrite/blob — two KVSep variants ---
-    let mut overwrite_blob_group = c.benchmark_group("set_overwrite/blob");
-    overwrite_blob_group.measurement_time(Duration::from_secs(8));
-    let overwrite_blob_value = "y".repeat(128 * 1024);
-    overwrite_blob_group.throughput(Throughput::Bytes(overwrite_blob_value.len() as u64));
-    let overwrite_blob_keys: Vec<String> = (0..OVERWRITE_KEY_SPACE)
-        .map(|slot| format!("blob-overwrite-{slot}"))
+    // --- set_overwrite/kv_sep — two KVSep variants ---
+    let mut overwrite_kv_sep_group = c.benchmark_group("set_overwrite/kv_sep");
+    overwrite_kv_sep_group.measurement_time(Duration::from_secs(8));
+    let overwrite_kv_sep_value = "y".repeat(128 * 1024);
+    overwrite_kv_sep_group.throughput(Throughput::Bytes(overwrite_kv_sep_value.len() as u64));
+    let overwrite_kv_sep_keys: Vec<String> = (0..OVERWRITE_KEY_SPACE)
+        .map(|slot| format!("kv_sep-overwrite-{slot}"))
         .collect();
 
     for threshold in [64_u32, 1024] {
-        let dir = tempfile::tempdir().expect("create overwrite blob tempdir");
+        let dir = tempfile::tempdir().expect("create overwrite kv_sep tempdir");
         let cache = RawKVSep::open(dir.path(), threshold);
         let label = cache.label();
-        for key in &overwrite_blob_keys {
-            cache.set(key.as_bytes(), &overwrite_blob_value);
+        for key in &overwrite_kv_sep_keys {
+            cache.set(key.as_bytes(), &overwrite_kv_sep_value);
         }
-        let mut overwrite_blob_index = 0_usize;
-        overwrite_blob_group.bench_function(
-            BenchmarkId::new(&label, overwrite_blob_value.len()),
+        let mut overwrite_kv_sep_index = 0_usize;
+        overwrite_kv_sep_group.bench_function(
+            BenchmarkId::new(&label, overwrite_kv_sep_value.len()),
             |b| {
                 b.iter(|| {
-                    overwrite_blob_index = overwrite_blob_index.wrapping_add(1);
-                    let key =
-                        &overwrite_blob_keys[overwrite_blob_index % overwrite_blob_keys.len()];
-                    cache.set(black_box(key.as_bytes()), black_box(&overwrite_blob_value));
+                    overwrite_kv_sep_index = overwrite_kv_sep_index.wrapping_add(1);
+                    let key = &overwrite_kv_sep_keys
+                        [overwrite_kv_sep_index % overwrite_kv_sep_keys.len()];
+                    cache.set(
+                        black_box(key.as_bytes()),
+                        black_box(&overwrite_kv_sep_value),
+                    );
                 })
             },
         );
         drop(dir);
     }
-    overwrite_blob_group.finish();
+    overwrite_kv_sep_group.finish();
 }
 
 // ---------------------------------------------------------------------------
@@ -312,26 +308,26 @@ fn bench_get(c: &mut Criterion) {
     );
     hot_inline_group.finish();
 
-    // --- get_hot_one_key/blob — two KVSep variants ---
-    let mut hot_blob_group = c.benchmark_group("get_hot_one_key/blob");
-    hot_blob_group.measurement_time(Duration::from_secs(8));
-    let hot_blob_value = "y".repeat(128 * 1024);
-    hot_blob_group.throughput(Throughput::Bytes(hot_blob_value.len() as u64));
+    // --- get_hot_one_key/kv_sep — two KVSep variants ---
+    let mut hot_kv_sep_group = c.benchmark_group("get_hot_one_key/kv_sep");
+    hot_kv_sep_group.measurement_time(Duration::from_secs(8));
+    let hot_kv_sep_value = "y".repeat(128 * 1024);
+    hot_kv_sep_group.throughput(Throughput::Bytes(hot_kv_sep_value.len() as u64));
 
     for threshold in [64_u32, 1024] {
-        let dir = tempfile::tempdir().expect("create hot blob tempdir");
+        let dir = tempfile::tempdir().expect("create hot kv_sep tempdir");
         let cache = RawKVSep::open(dir.path(), threshold);
         let label = cache.label();
-        cache.set(b"blob-key", &hot_blob_value);
-        hot_blob_group.bench_function(BenchmarkId::new(&label, hot_blob_value.len()), |b| {
+        cache.set(b"kv_sep-key", &hot_kv_sep_value);
+        hot_kv_sep_group.bench_function(BenchmarkId::new(&label, hot_kv_sep_value.len()), |b| {
             b.iter(|| {
-                let value = cache.get(black_box(b"blob-key"));
+                let value = cache.get(black_box(b"kv_sep-key"));
                 black_box(value.as_deref().map_or(0, str::len));
             })
         });
         drop(dir);
     }
-    hot_blob_group.finish();
+    hot_kv_sep_group.finish();
 
     // --- get_warm_many_keys/inline ---
     let mut warm_inline_group = c.benchmark_group("get_warm_many_keys/inline");
@@ -360,34 +356,34 @@ fn bench_get(c: &mut Criterion) {
     );
     warm_inline_group.finish();
 
-    // --- get_warm_many_keys/blob — two KVSep variants ---
-    let mut warm_blob_group = c.benchmark_group("get_warm_many_keys/blob");
-    warm_blob_group.measurement_time(Duration::from_secs(8));
-    let warm_blob_value = "y".repeat(128 * 1024);
-    warm_blob_group.throughput(Throughput::Bytes(warm_blob_value.len() as u64));
-    let warm_blob_keys: Vec<String> = (0..WARM_KEY_SPACE)
-        .map(|slot| format!("blob-warm-key-{slot}"))
+    // --- get_warm_many_keys/kv_sep — two KVSep variants ---
+    let mut warm_kv_sep_group = c.benchmark_group("get_warm_many_keys/kv_sep");
+    warm_kv_sep_group.measurement_time(Duration::from_secs(8));
+    let warm_kv_sep_value = "y".repeat(128 * 1024);
+    warm_kv_sep_group.throughput(Throughput::Bytes(warm_kv_sep_value.len() as u64));
+    let warm_kv_sep_keys: Vec<String> = (0..WARM_KEY_SPACE)
+        .map(|slot| format!("kv_sep-warm-key-{slot}"))
         .collect();
 
     for threshold in [64_u32, 1024] {
-        let dir = tempfile::tempdir().expect("create warm blob tempdir");
+        let dir = tempfile::tempdir().expect("create warm kv_sep tempdir");
         let cache = RawKVSep::open(dir.path(), threshold);
         let label = cache.label();
-        for key in &warm_blob_keys {
-            cache.set(key.as_bytes(), &warm_blob_value);
+        for key in &warm_kv_sep_keys {
+            cache.set(key.as_bytes(), &warm_kv_sep_value);
         }
-        let mut warm_blob_index = 0_usize;
-        warm_blob_group.bench_function(BenchmarkId::new(&label, warm_blob_value.len()), |b| {
+        let mut warm_kv_sep_index = 0_usize;
+        warm_kv_sep_group.bench_function(BenchmarkId::new(&label, warm_kv_sep_value.len()), |b| {
             b.iter(|| {
-                warm_blob_index = warm_blob_index.wrapping_add(1);
-                let key = &warm_blob_keys[warm_blob_index % warm_blob_keys.len()];
+                warm_kv_sep_index = warm_kv_sep_index.wrapping_add(1);
+                let key = &warm_kv_sep_keys[warm_kv_sep_index % warm_kv_sep_keys.len()];
                 let value = cache.get(black_box(key.as_bytes()));
                 black_box(value.as_deref().map_or(0, str::len));
             })
         });
         drop(dir);
     }
-    warm_blob_group.finish();
+    warm_kv_sep_group.finish();
 }
 
 // ---------------------------------------------------------------------------
@@ -441,7 +437,7 @@ fn bench_contains_key(c: &mut Criterion) {
 
 fn bench_concurrent(c: &mut Criterion) {
     const INLINE_SET_OPS_PER_THREAD: usize = 128;
-    const BLOB_SET_OPS_PER_THREAD: usize = 16;
+    const KV_SEP_SET_OPS_PER_THREAD: usize = 16;
     const KEYS_PER_THREAD: usize = 64;
     const GET_OPS_PER_THREAD: usize = 256;
 
@@ -478,8 +474,7 @@ fn bench_concurrent(c: &mut Criterion) {
                             let thread_base =
                                 batch_start + (tid * INLINE_SET_OPS_PER_THREAD) as u64;
                             for offset in 0..INLINE_SET_OPS_PER_THREAD {
-                                let key =
-                                    format!("concurrent-set-{}", thread_base + offset as u64);
+                                let key = format!("concurrent-set-{}", thread_base + offset as u64);
                                 cache.set(black_box(key.as_bytes()), black_box(payload.as_ref()));
                             }
                         });
@@ -491,13 +486,13 @@ fn bench_concurrent(c: &mut Criterion) {
     }
     inline_set_group.finish();
 
-    // concurrent_set_new_key/blob — two KVSep variants
-    let mut blob_set_group = c.benchmark_group("concurrent_set_new_key/blob");
-    blob_set_group.measurement_time(Duration::from_secs(8));
-    let blob_set_payload = Arc::new("b".repeat(128 * 1024));
+    // concurrent_set_new_key/kv_sep — two KVSep variants
+    let mut kv_sep_set_group = c.benchmark_group("concurrent_set_new_key/kv_sep");
+    kv_sep_set_group.measurement_time(Duration::from_secs(8));
+    let kv_sep_set_payload = Arc::new("b".repeat(128 * 1024));
     for threshold in [64_u32, 1024] {
         for &threads in &[2_usize, 4, 8] {
-            let set_dir = tempfile::tempdir().expect("create concurrent blob set tempdir");
+            let set_dir = tempfile::tempdir().expect("create concurrent kv_sep set tempdir");
             let set_cache = Arc::new(RawKVSep::open(set_dir.path(), threshold));
             let label = set_cache.label();
             let set_counter = Arc::new(AtomicU64::new(0));
@@ -507,27 +502,27 @@ fn bench_concurrent(c: &mut Criterion) {
                     .build()
                     .expect("build pool"),
             );
-            blob_set_group.throughput(Throughput::Bytes(
-                (blob_set_payload.len() * BLOB_SET_OPS_PER_THREAD * threads) as u64,
+            kv_sep_set_group.throughput(Throughput::Bytes(
+                (kv_sep_set_payload.len() * KV_SEP_SET_OPS_PER_THREAD * threads) as u64,
             ));
-            blob_set_group.bench_with_input(
+            kv_sep_set_group.bench_with_input(
                 BenchmarkId::new(format!("{label}/threads"), threads),
                 &threads,
                 |b, &threads| {
                     let cache = Arc::clone(&set_cache);
-                    let payload = Arc::clone(&blob_set_payload);
+                    let payload = Arc::clone(&kv_sep_set_payload);
                     let counter = Arc::clone(&set_counter);
                     let pool = Arc::clone(&pool);
                     b.iter(|| {
-                        let batch_size = (threads * BLOB_SET_OPS_PER_THREAD) as u64;
+                        let batch_size = (threads * KV_SEP_SET_OPS_PER_THREAD) as u64;
                         let batch_start = counter.fetch_add(batch_size, Ordering::Relaxed);
                         pool.install(|| {
                             (0..threads).into_par_iter().for_each(|tid| {
                                 let thread_base =
-                                    batch_start + (tid * BLOB_SET_OPS_PER_THREAD) as u64;
-                                for offset in 0..BLOB_SET_OPS_PER_THREAD {
+                                    batch_start + (tid * KV_SEP_SET_OPS_PER_THREAD) as u64;
+                                for offset in 0..KV_SEP_SET_OPS_PER_THREAD {
                                     let key = format!(
-                                        "concurrent-blob-set-{}",
+                                        "concurrent-kv_sep-set-{}",
                                         thread_base + offset as u64
                                     );
                                     cache.set(
@@ -543,12 +538,11 @@ fn bench_concurrent(c: &mut Criterion) {
             drop(set_dir);
         }
     }
-    blob_set_group.finish();
+    kv_sep_set_group.finish();
 
     // concurrent_get_many_keys_sharded/inline
     let inline_value = "q".repeat(512);
-    let mut inline_sharded_get_group =
-        c.benchmark_group("concurrent_get_many_keys_sharded/inline");
+    let mut inline_sharded_get_group = c.benchmark_group("concurrent_get_many_keys_sharded/inline");
     inline_sharded_get_group.measurement_time(Duration::from_secs(8));
     for &threads in &[2_usize, 4, 8] {
         let get_dir = tempfile::tempdir().expect("create concurrent inline sharded get tempdir");
@@ -601,8 +595,7 @@ fn bench_concurrent(c: &mut Criterion) {
     inline_sharded_get_group.finish();
 
     // concurrent_get_shared_many_keys/inline
-    let mut inline_shared_get_group =
-        c.benchmark_group("concurrent_get_shared_many_keys/inline");
+    let mut inline_shared_get_group = c.benchmark_group("concurrent_get_shared_many_keys/inline");
     inline_shared_get_group.measurement_time(Duration::from_secs(8));
     for &threads in &[2_usize, 4, 8] {
         let get_dir = tempfile::tempdir().expect("create concurrent inline shared get tempdir");
@@ -647,13 +640,14 @@ fn bench_concurrent(c: &mut Criterion) {
     }
     inline_shared_get_group.finish();
 
-    // concurrent_get_many_keys_sharded/blob — two KVSep variants
-    let blob_value = "w".repeat(128 * 1024);
-    let mut blob_sharded_get_group = c.benchmark_group("concurrent_get_many_keys_sharded/blob");
-    blob_sharded_get_group.measurement_time(Duration::from_secs(8));
+    // concurrent_get_many_keys_sharded/kv_sep — two KVSep variants
+    let kv_sep_value = "w".repeat(128 * 1024);
+    let mut kv_sep_sharded_get_group = c.benchmark_group("concurrent_get_many_keys_sharded/kv_sep");
+    kv_sep_sharded_get_group.measurement_time(Duration::from_secs(8));
     for threshold in [64_u32, 1024] {
         for &threads in &[2_usize, 4, 8] {
-            let get_dir = tempfile::tempdir().expect("create concurrent blob sharded get tempdir");
+            let get_dir =
+                tempfile::tempdir().expect("create concurrent kv_sep sharded get tempdir");
             let get_cache = Arc::new(RawKVSep::open(get_dir.path(), threshold));
             let label = get_cache.label();
             let pool = Arc::new(
@@ -662,30 +656,30 @@ fn bench_concurrent(c: &mut Criterion) {
                     .build()
                     .expect("build pool"),
             );
-            let blob_keys_by_thread: Vec<Vec<String>> = (0..threads)
+            let kv_sep_keys_by_thread: Vec<Vec<String>> = (0..threads)
                 .map(|tid| {
                     (0..KEYS_PER_THREAD)
                         .map(|slot| {
-                            format!("blob-key-{threads}-{}", tid * KEYS_PER_THREAD + slot)
+                            format!("kv_sep-key-{threads}-{}", tid * KEYS_PER_THREAD + slot)
                         })
                         .collect()
                 })
                 .collect();
-            for keys in &blob_keys_by_thread {
+            for keys in &kv_sep_keys_by_thread {
                 for key in keys {
-                    get_cache.set(key.as_bytes(), &blob_value);
+                    get_cache.set(key.as_bytes(), &kv_sep_value);
                 }
             }
-            let blob_keys_by_thread = Arc::new(blob_keys_by_thread);
-            blob_sharded_get_group.throughput(Throughput::Bytes(
-                (blob_value.len() * GET_OPS_PER_THREAD * threads) as u64,
+            let kv_sep_keys_by_thread = Arc::new(kv_sep_keys_by_thread);
+            kv_sep_sharded_get_group.throughput(Throughput::Bytes(
+                (kv_sep_value.len() * GET_OPS_PER_THREAD * threads) as u64,
             ));
-            blob_sharded_get_group.bench_with_input(
+            kv_sep_sharded_get_group.bench_with_input(
                 BenchmarkId::new(format!("{label}/threads"), threads),
                 &threads,
                 |b, &threads| {
                     let cache = Arc::clone(&get_cache);
-                    let keys_by_thread = Arc::clone(&blob_keys_by_thread);
+                    let keys_by_thread = Arc::clone(&kv_sep_keys_by_thread);
                     let pool = Arc::clone(&pool);
                     b.iter(|| {
                         pool.install(|| {
@@ -704,7 +698,7 @@ fn bench_concurrent(c: &mut Criterion) {
             drop(get_dir);
         }
     }
-    blob_sharded_get_group.finish();
+    kv_sep_sharded_get_group.finish();
 }
 
 criterion_group!(

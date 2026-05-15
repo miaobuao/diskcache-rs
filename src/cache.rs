@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -14,7 +14,6 @@ use rkyv::{
 };
 use uuid::Uuid;
 
-use crate::blob_store::BlobStore;
 use crate::codec;
 use crate::envelope::{RecordEnvelope, RecordV1, StoredValueV1};
 use crate::error::{DiskCacheError, Result};
@@ -34,14 +33,12 @@ struct NamespaceMeta {
 pub struct DiskCache {
     db: Database,
     meta: Keyspace,
-    blobs_root: PathBuf,
     namespace_lock: Mutex<()>,
 }
 
 pub struct CacheNamespace {
     _db: Database,
     keyspace: Keyspace,
-    blob_store: BlobStore,
     config: NamespaceConfig,
 }
 
@@ -51,10 +48,8 @@ impl DiskCache {
         std::fs::create_dir_all(root)?;
 
         let db_dir = root.join("db");
-        let blobs_root = root.join("blobs");
 
         std::fs::create_dir_all(&db_dir)?;
-        std::fs::create_dir_all(&blobs_root)?;
 
         let db = Database::builder(&db_dir)
             .with_compaction_filter_factories(make_factory_selector(NAMESPACE_KEYSPACE_PREFIX))
@@ -64,7 +59,6 @@ impl DiskCache {
         Ok(Self {
             db,
             meta,
-            blobs_root,
             namespace_lock: Mutex::new(()),
         })
     }
@@ -113,11 +107,6 @@ impl DiskCache {
         self.db.delete_keyspace(keyspace)?;
         self.meta.remove(name.as_bytes())?;
 
-        let blob_dir = self.namespace_blob_root(&meta.id);
-        if blob_dir.exists() {
-            std::fs::remove_dir_all(blob_dir)?;
-        }
-
         Ok(true)
     }
 
@@ -137,10 +126,6 @@ impl DiskCache {
         Ok(())
     }
 
-    pub fn blob_root(&self) -> &Path {
-        &self.blobs_root
-    }
-
     fn namespace_meta(&self, name: &str) -> Result<Option<NamespaceMeta>> {
         self.meta
             .get(name.as_bytes())?
@@ -148,25 +133,23 @@ impl DiskCache {
             .transpose()
     }
 
-    fn open_namespace(&self, meta: &NamespaceMeta, config: NamespaceConfig) -> Result<CacheNamespace> {
+    fn open_namespace(
+        &self,
+        meta: &NamespaceMeta,
+        config: NamespaceConfig,
+    ) -> Result<CacheNamespace> {
         let keyspace_create_options = config.keyspace_create_options.clone();
-        let keyspace = self.db.keyspace(
-            &namespace_keyspace_name(&meta.id),
-            move || keyspace_create_options.clone(),
-        )?;
-        let blob_store = BlobStore::new(self.namespace_blob_root(&meta.id))?;
-        blob_store.cleanup_tmp_files()?;
+        let keyspace = self
+            .db
+            .keyspace(&namespace_keyspace_name(&meta.id), move || {
+                keyspace_create_options.clone()
+            })?;
 
         Ok(CacheNamespace {
             _db: self.db.clone(),
             keyspace,
-            blob_store,
             config,
         })
-    }
-
-    fn namespace_blob_root(&self, id: &str) -> PathBuf {
-        self.blobs_root.join(id)
     }
 }
 
@@ -252,78 +235,11 @@ mod tests {
         let value = "x".repeat(10_000);
 
         users.set("big", &value, None).expect("set");
-        let path = users.blob_path_for_key("big");
-        assert!(!path.exists());
 
         let got: Option<String> = users.get("big").expect("get");
         assert_eq!(Some(value), got);
 
         users.remove("big").expect("remove");
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn reads_legacy_blobref_record() {
-        let (_dir, cache) = new_cache(8);
-        let users = cache.namespace("users", config(8)).expect("open users");
-        let value = "legacy-value".repeat(512);
-        let payload = codec::serialize_value(&value).expect("serialize payload");
-        let blob = users
-            .blob_store
-            .write_blob(b"legacy-key", &payload)
-            .expect("write legacy blob");
-
-        let record = RecordEnvelope::V1(RecordV1 {
-            expires_at_ms: None,
-            value: StoredValueV1::BlobRef {
-                rel_path: blob.rel_path.clone(),
-                len: blob.len,
-                checksum: blob.checksum,
-            },
-        });
-        let encoded = codec::serialize_value(&record).expect("encode record");
-        users
-            .keyspace
-            .insert(b"legacy-key", encoded)
-            .expect("insert legacy record");
-
-        let got: Option<String> = users.get("legacy-key").expect("get");
-        assert_eq!(Some(value), got);
-        assert!(users.blob_store.blob_full_path(&blob.rel_path).exists());
-    }
-
-    #[test]
-    fn overwrite_legacy_blobref_deletes_old_blob_file() {
-        let (_dir, cache) = new_cache(8);
-        let users = cache.namespace("users", config(8)).expect("open users");
-        let value = "legacy-value".repeat(512);
-        let payload = codec::serialize_value(&value).expect("serialize payload");
-        let blob = users
-            .blob_store
-            .write_blob(b"legacy-overwrite", &payload)
-            .expect("write legacy blob");
-
-        let blob_path = users.blob_store.blob_full_path(&blob.rel_path);
-        assert!(blob_path.exists());
-
-        let record = RecordEnvelope::V1(RecordV1 {
-            expires_at_ms: None,
-            value: StoredValueV1::BlobRef {
-                rel_path: blob.rel_path,
-                len: blob.len,
-                checksum: blob.checksum,
-            },
-        });
-        let encoded = codec::serialize_value(&record).expect("encode record");
-        users
-            .keyspace
-            .insert(b"legacy-overwrite", encoded)
-            .expect("insert legacy record");
-
-        users
-            .set("legacy-overwrite", &"new-inline".to_string(), None)
-            .expect("overwrite to inline");
-        assert!(!blob_path.exists());
     }
 
     #[test]
@@ -332,14 +248,18 @@ mod tests {
         let inline = cache
             .namespace("inline", config(1024))
             .expect("open inline");
-        let blob = cache.namespace("blob", config(8)).expect("open blob");
+        let separated = cache
+            .namespace("separated", config(8))
+            .expect("open separated");
         let value = "x".repeat(128);
 
         inline.set("k", &value, None).expect("set inline");
-        blob.set("k", &value, None).expect("set blob");
+        separated.set("k", &value, None).expect("set separated");
 
-        assert!(!inline.blob_path_for_key("k").exists());
-        assert!(!blob.blob_path_for_key("k").exists());
+        let inline_value: Option<String> = inline.get("k").expect("get inline");
+        let separated_value: Option<String> = separated.get("k").expect("get separated");
+        assert_eq!(Some(value.clone()), inline_value);
+        assert_eq!(Some(value), separated_value);
     }
 
     #[test]
@@ -349,11 +269,14 @@ mod tests {
         let value = "x".repeat(128);
 
         users.set("before", &value, None).expect("set before");
-        assert!(!users.blob_path_for_key("before").exists());
 
         let updated = cache.namespace("users", config(8)).expect("reopen users");
         updated.set("after", &value, None).expect("set after");
-        assert!(!updated.blob_path_for_key("after").exists());
+
+        let before: Option<String> = updated.get("before").expect("get before");
+        let after: Option<String> = updated.get("after").expect("get after");
+        assert_eq!(Some(value.clone()), before);
+        assert_eq!(Some(value), after);
     }
 
     #[test]
@@ -385,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn same_key_blob_paths_are_isolated_by_namespace_directory() {
+    fn same_key_large_values_are_isolated_by_namespace() {
         let (_dir, cache) = new_cache(8);
         let left = cache.namespace("left", config(8)).expect("open left");
         let right = cache.namespace("right", config(8)).expect("open right");
@@ -396,36 +319,27 @@ mod tests {
             .set("shared", &"b".repeat(20_000), None)
             .expect("set right");
 
-        let left_path = left.blob_path_for_key("shared");
-        let right_path = right.blob_path_for_key("shared");
-        assert_ne!(left_path, right_path);
-        assert!(!left_path.exists());
-        assert!(!right_path.exists());
-
         left.remove("shared").expect("remove left");
-        assert!(!left_path.exists());
-        assert!(!right_path.exists());
 
         let got: Option<String> = right.get("shared").expect("get right");
         assert_eq!(Some("b".repeat(20_000)), got);
     }
 
     #[test]
-    fn overwrite_large_value_keeps_no_blob_file() {
+    fn overwrite_large_value_roundtrip() {
         let (_dir, cache) = new_cache(8);
         let users = cache.namespace("users", config(8)).expect("open users");
 
         users
             .set("k", &"a".repeat(20_000), None)
             .expect("first set");
-        let path = users.blob_path_for_key("k");
-        assert!(!path.exists());
 
         users
             .set("k", &"small".to_string(), None)
             .expect("overwrite");
 
-        assert!(!path.exists());
+        let got: Option<String> = users.get("k").expect("get");
+        assert_eq!(Some("small".to_string()), got);
     }
 
     #[test]
@@ -462,12 +376,7 @@ mod tests {
             .set("1", &"s".repeat(20_000), None)
             .expect("set session");
 
-        let user_blob = users.blob_path_for_key("1");
-        let session_blob = sessions.blob_path_for_key("1");
-
         assert_eq!(2, users.clear().expect("clear users"));
-        assert!(!user_blob.exists());
-        assert!(!session_blob.exists());
         assert!(!users.contains_key("1").expect("contains user 1"));
         assert!(!users.contains_key("2").expect("contains user 2"));
         assert!(sessions.contains_key("1").expect("contains session"));
@@ -485,7 +394,6 @@ mod tests {
         sessions
             .set("1", &"s".repeat(20_000), None)
             .expect("set session");
-        let users_blob_root = users.blob_root().to_path_buf();
 
         let mut names = cache.list_namespaces().expect("list namespaces");
         names.sort();
@@ -493,15 +401,13 @@ mod tests {
 
         assert!(cache.delete_namespace("users").expect("delete users"));
         assert!(!cache.delete_namespace("users").expect("delete users again"));
-        assert!(!users_blob_root.exists());
 
         let reopened_users = cache.namespace("users", config(8)).expect("reopen users");
         let missing: Option<String> = reopened_users.get("1").expect("get deleted user");
         let session: Option<String> = sessions.get("1").expect("get session");
         assert_eq!(None, missing);
         assert_eq!(Some("s".repeat(20_000)), session);
-
-        assert!(dir.path().join("blobs").exists());
+        assert!(dir.path().join("db").exists());
     }
 
     #[test]
@@ -514,19 +420,23 @@ mod tests {
     }
 
     #[test]
-    fn cleans_part_files_on_namespace_open() {
-        let dir = tempfile::tempdir().expect("create tempdir");
-        let cache = DiskCache::open(dir.path()).expect("open");
-        let users = cache
-            .namespace("users", config(1024))
-            .expect("open users");
-        let part = users.blob_root().join(".tmp").join("stale.part");
-        std::fs::write(&part, b"abc").expect("write part");
-        drop(users);
+    fn set_writes_v1_inline_record() {
+        let (_dir, cache) = new_cache(1024);
+        let users = cache.namespace("users", config(1024)).expect("open users");
 
-        let _users = cache
-            .namespace("users", config(1024))
-            .expect("reopen users");
-        assert!(!part.exists());
+        users.set("shape", &"value".to_string(), None).expect("set");
+
+        let bytes = users
+            .keyspace
+            .get(b"shape")
+            .expect("read raw record")
+            .expect("raw record");
+        let record: RecordEnvelope = codec::deserialize_value(&bytes).expect("decode record");
+        let RecordEnvelope::V1(record) = record;
+        let StoredValueV1::Inline { bytes } = record.value;
+        let value: String = codec::deserialize_value(&bytes).expect("decode value");
+
+        assert_eq!(None, record.expires_at_ms);
+        assert_eq!("value", value);
     }
 }
