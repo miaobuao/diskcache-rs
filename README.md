@@ -153,37 +153,37 @@ Benchmarks cover: `set` (inline/blob), `get` (inline/blob), `contains_key` (hit/
 
 | Operation | Value Size | Latency (avg) | Throughput (avg) |
 |-----------|------------|----------------|-------------------|
-| `set_new_key/inline` | 512 B | 12.212 µs | 39.985 MiB/s |
-| `set_new_key/blob` | 128 KiB | 543.36 µs | 230.05 MiB/s |
-| `set_overwrite/inline` | 512 B | 3.9304 µs | 124.23 MiB/s |
-| `set_overwrite/blob` | 128 KiB | 485.83 µs | 257.29 MiB/s |
-| `get_hot_one_key/inline` | 512 B | 218.66 ns | 2.1807 GiB/s |
-| `get_hot_one_key/blob` | 128 KiB | 32.392 µs | 3.7685 GiB/s |
-| `get_warm_many_keys/inline` | 512 B | 429.59 ns | 1.1100 GiB/s |
-| `get_warm_many_keys/blob` | 128 KiB | 39.841 µs | 3.0639 GiB/s |
-| `contains_key/hit` | - | 208.90 ns | - |
-| `contains_key/miss` | - | 83.078 ns | - |
-| `contains_key/hit_many` | - | 320.08 ns | - |
-| `contains_key/miss_many` | - | 82.552 ns | - |
+| `set_new_key/inline` | 512 B | 3.476 µs | 140.47 MiB/s |
+| `set_new_key/kv_sep` | 128 KiB | 70.306 µs | 1.7363 GiB/s |
+| `set_overwrite/inline` | 512 B | 3.1276 µs | 156.12 MiB/s |
+| `set_overwrite/kv_sep` | 128 KiB | 98.209 µs | 1.2430 GiB/s |
+| `get_hot_one_key/inline` | 512 B | 188.72 ns | 2.5267 GiB/s |
+| `get_hot_one_key/kv_sep` | 128 KiB | 5.6293 µs | 21.685 GiB/s |
+| `get_warm_many_keys/inline` | 512 B | 394.80 ns | 1.2078 GiB/s |
+| `get_warm_many_keys/kv_sep` | 128 KiB | 17.965 µs | 6.7949 GiB/s |
+| `contains_key/hit` | - | 205.94 ns | - |
+| `contains_key/miss` | - | 75.838 ns | - |
+| `contains_key/hit_many` | - | 331.56 ns | - |
+| `contains_key/miss_many` | - | 79.014 ns | - |
 
 #### Concurrent Operations (2/4/8 threads)
 
 | Operation | Threads | Latency (avg) | Throughput (avg) |
 |-----------|---------|----------------|-------------------|
-| `concurrent_set_new_key/inline` | 2 | 2.1456 ms | 58.260 MiB/s |
-| `concurrent_set_new_key/inline` | 4 | 6.6669 ms | 37.499 MiB/s |
-| `concurrent_set_new_key/inline` | 8 | 13.697 ms | 36.503 MiB/s |
-| `concurrent_set_new_key/blob` | 2 | 12.843 ms | 311.44 MiB/s |
-| `concurrent_set_new_key/blob` | 4 | 19.252 ms | 415.55 MiB/s |
-| `concurrent_set_new_key/blob` | 8 | 43.611 ms | 366.88 MiB/s |
-| `concurrent_get_many_keys_sharded/inline` | 2 | 110.64 µs | 2.2065 GiB/s |
-| `concurrent_get_many_keys_sharded/inline` | 4 | 133.71 µs | 3.6518 GiB/s |
-| `concurrent_get_many_keys_sharded/inline` | 8 | 247.57 µs | 3.9446 GiB/s |
-| `concurrent_get_shared_many_keys/inline` | 2 | 125.83 µs | 1.9402 GiB/s |
-| `concurrent_get_shared_many_keys/inline` | 4 | 147.81 µs | 3.3035 GiB/s |
-| `concurrent_get_shared_many_keys/inline` | 8 | 263.50 µs | 3.7062 GiB/s |
-| `concurrent_get_many_keys_sharded/blob` | 2 | 10.653 ms | 5.8667 GiB/s |
-| `concurrent_get_many_keys_sharded/blob` | 4 | 11.517 ms | 10.853 GiB/s |
-| `concurrent_get_many_keys_sharded/blob` | 8 | 17.030 ms | 14.680 GiB/s |
+| `concurrent_set_new_key/inline` | 2 | 1.1403 ms | 109.62 MiB/s |
+| `concurrent_set_new_key/inline` | 4 | 2.6139 ms | 95.643 MiB/s |
+| `concurrent_set_new_key/inline` | 8 | 5.5188 ms | 90.599 MiB/s |
+| `concurrent_set_new_key/kv_sep` | 2 | 6.6543 ms | 601.11 MiB/s |
+| `concurrent_set_new_key/kv_sep` | 4 | 12.285 ms | 651.20 MiB/s |
+| `concurrent_set_new_key/kv_sep` | 8 | 25.374 ms | 630.56 MiB/s |
+| `concurrent_get_many_keys_sharded/inline` | 2 | 105.59 µs | 2.3122 GiB/s |
+| `concurrent_get_many_keys_sharded/inline` | 4 | 118.90 µs | 4.1066 GiB/s |
+| `concurrent_get_many_keys_sharded/inline` | 8 | 241.99 µs | 4.0355 GiB/s |
+| `concurrent_get_shared_many_keys/inline` | 2 | 119.87 µs | 2.0367 GiB/s |
+| `concurrent_get_shared_many_keys/inline` | 4 | 135.85 µs | 3.5942 GiB/s |
+| `concurrent_get_shared_many_keys/inline` | 8 | 306.28 µs | 3.1885 GiB/s |
+| `concurrent_get_many_keys_sharded/kv_sep` | 2 | 5.3478 ms | 11.687 GiB/s |
+| `concurrent_get_many_keys_sharded/kv_sep` | 4 | 13.391 ms | 9.3346 GiB/s |
+| `concurrent_get_many_keys_sharded/kv_sep` | 8 | 71.189 ms | 3.5118 GiB/s |
 
-*Measured with `diskcache` v0.2.0.*
+*Measured with `diskcache` v0.3.0.*
