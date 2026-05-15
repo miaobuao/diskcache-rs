@@ -15,6 +15,7 @@ pub struct BlobStore {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct BlobWriteResult {
     pub rel_path: String,
     pub len: u64,
@@ -45,6 +46,7 @@ impl BlobStore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn write_blob(&self, key: &[u8], bytes: &[u8]) -> Result<BlobWriteResult> {
         let rel_path = build_rel_path(key);
         let final_path = self.root_dir.join(&rel_path);

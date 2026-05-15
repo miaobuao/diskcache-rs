@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use diskcache::{CacheNamespace, DiskCache, NamespaceConfig};
+use fjall::{KeyspaceCreateOptions, KvSeparationOptions};
 use rayon::{ThreadPoolBuilder, prelude::*};
 
 fn open_namespace(
@@ -19,6 +20,15 @@ fn open_namespace(
         .expect("open benchmark namespace")
 }
 
+fn config_with_threshold(threshold_bytes: usize) -> NamespaceConfig {
+    let threshold = u32::try_from(threshold_bytes).expect("threshold should fit u32");
+    NamespaceConfig {
+        keyspace_create_options: KeyspaceCreateOptions::default().with_kv_separation(Some(
+            KvSeparationOptions::default().separation_threshold(threshold),
+        )),
+    }
+}
+
 fn bench_set(c: &mut Criterion) {
     const OVERWRITE_KEY_SPACE: usize = 1024;
 
@@ -27,9 +37,7 @@ fn bench_set(c: &mut Criterion) {
     let append_inline_dir = tempfile::tempdir().expect("create append inline tempdir");
     let append_inline_cache = open_namespace(
         append_inline_dir.path(),
-        NamespaceConfig {
-            inline_threshold_bytes: 64 * 1024,
-        },
+        config_with_threshold(64 * 1024),
         "open append inline cache",
     );
     let append_inline_value = "x".repeat(512);
@@ -59,9 +67,7 @@ fn bench_set(c: &mut Criterion) {
     let append_blob_dir = tempfile::tempdir().expect("create append blob tempdir");
     let append_blob_cache = open_namespace(
         append_blob_dir.path(),
-        NamespaceConfig {
-            inline_threshold_bytes: 64,
-        },
+        config_with_threshold(64),
         "open append blob cache",
     );
     let append_blob_value = "y".repeat(128 * 1024);
@@ -91,9 +97,7 @@ fn bench_set(c: &mut Criterion) {
     let overwrite_inline_dir = tempfile::tempdir().expect("create overwrite inline tempdir");
     let overwrite_inline_cache = open_namespace(
         overwrite_inline_dir.path(),
-        NamespaceConfig {
-            inline_threshold_bytes: 64 * 1024,
-        },
+        config_with_threshold(64 * 1024),
         "open overwrite inline cache",
     );
     let overwrite_inline_value = "x".repeat(512);
@@ -133,9 +137,7 @@ fn bench_set(c: &mut Criterion) {
     let overwrite_blob_dir = tempfile::tempdir().expect("create overwrite blob tempdir");
     let overwrite_blob_cache = open_namespace(
         overwrite_blob_dir.path(),
-        NamespaceConfig {
-            inline_threshold_bytes: 64,
-        },
+        config_with_threshold(64),
         "open overwrite blob cache",
     );
     let overwrite_blob_value = "y".repeat(128 * 1024);
@@ -178,9 +180,7 @@ fn bench_get(c: &mut Criterion) {
     let hot_inline_dir = tempfile::tempdir().expect("create hot inline tempdir");
     let hot_inline_cache = open_namespace(
         hot_inline_dir.path(),
-        NamespaceConfig {
-            inline_threshold_bytes: 64 * 1024,
-        },
+        config_with_threshold(64 * 1024),
         "open hot inline cache",
     );
     let hot_inline_value = "x".repeat(512);
@@ -207,9 +207,7 @@ fn bench_get(c: &mut Criterion) {
     let hot_blob_dir = tempfile::tempdir().expect("create hot blob tempdir");
     let hot_blob_cache = open_namespace(
         hot_blob_dir.path(),
-        NamespaceConfig {
-            inline_threshold_bytes: 64,
-        },
+        config_with_threshold(64),
         "open hot blob cache",
     );
     let hot_blob_value = "y".repeat(128 * 1024);
@@ -233,9 +231,7 @@ fn bench_get(c: &mut Criterion) {
     let warm_inline_dir = tempfile::tempdir().expect("create warm inline tempdir");
     let warm_inline_cache = open_namespace(
         warm_inline_dir.path(),
-        NamespaceConfig {
-            inline_threshold_bytes: 64 * 1024,
-        },
+        config_with_threshold(64 * 1024),
         "open warm inline cache",
     );
     let warm_inline_value = "x".repeat(512);
@@ -270,9 +266,7 @@ fn bench_get(c: &mut Criterion) {
     let warm_blob_dir = tempfile::tempdir().expect("create warm blob tempdir");
     let warm_blob_cache = open_namespace(
         warm_blob_dir.path(),
-        NamespaceConfig {
-            inline_threshold_bytes: 64,
-        },
+        config_with_threshold(64),
         "open warm blob cache",
     );
     let warm_blob_value = "y".repeat(128 * 1024);
@@ -310,9 +304,7 @@ fn bench_contains_key(c: &mut Criterion) {
     let dir = tempfile::tempdir().expect("create tempdir");
     let cache = open_namespace(
         dir.path(),
-        NamespaceConfig {
-            inline_threshold_bytes: 64 * 1024,
-        },
+        config_with_threshold(64 * 1024),
         "open cache",
     );
     cache
@@ -386,9 +378,7 @@ fn bench_concurrent(c: &mut Criterion) {
         let set_dir = tempfile::tempdir().expect("create concurrent set tempdir");
         let set_cache = Arc::new(open_namespace(
             set_dir.path(),
-            NamespaceConfig {
-                inline_threshold_bytes: 64 * 1024,
-            },
+            config_with_threshold(64 * 1024),
             "open concurrent set cache",
         ));
         let set_counter = Arc::new(AtomicU64::new(0));
@@ -443,9 +433,7 @@ fn bench_concurrent(c: &mut Criterion) {
         let set_dir = tempfile::tempdir().expect("create concurrent blob set tempdir");
         let set_cache = Arc::new(open_namespace(
             set_dir.path(),
-            NamespaceConfig {
-                inline_threshold_bytes: 64,
-            },
+            config_with_threshold(64),
             "open concurrent blob set cache",
         ));
         let set_counter = Arc::new(AtomicU64::new(0));
@@ -500,9 +488,7 @@ fn bench_concurrent(c: &mut Criterion) {
         let get_dir = tempfile::tempdir().expect("create concurrent inline get tempdir");
         let get_cache = Arc::new(open_namespace(
             get_dir.path(),
-            NamespaceConfig {
-                inline_threshold_bytes: 64 * 1024,
-            },
+            config_with_threshold(64 * 1024),
             "open concurrent inline get cache",
         ));
         let pool = Arc::new(
@@ -565,9 +551,7 @@ fn bench_concurrent(c: &mut Criterion) {
         let get_dir = tempfile::tempdir().expect("create concurrent inline shared get tempdir");
         let get_cache = Arc::new(open_namespace(
             get_dir.path(),
-            NamespaceConfig {
-                inline_threshold_bytes: 64 * 1024,
-            },
+            config_with_threshold(64 * 1024),
             "open concurrent inline shared get cache",
         ));
         let pool = Arc::new(
@@ -622,9 +606,7 @@ fn bench_concurrent(c: &mut Criterion) {
         let get_dir = tempfile::tempdir().expect("create concurrent blob get tempdir");
         let get_cache = Arc::new(open_namespace(
             get_dir.path(),
-            NamespaceConfig {
-                inline_threshold_bytes: 64,
-            },
+            config_with_threshold(64),
             "open concurrent blob get cache",
         ));
         let pool = Arc::new(
