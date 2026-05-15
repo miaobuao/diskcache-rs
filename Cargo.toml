@@ -24,3 +24,7 @@ tempfile = "3.23.0"
 [[bench]]
 name = "cache_bench"
 harness = false
+
+[[bench]]
+name = "fjall_raw_bench"
+harness = false
