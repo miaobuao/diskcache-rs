@@ -13,14 +13,7 @@ pub struct RecordV1 {
 
 #[derive(Debug, Clone, Archive, Serialize, Deserialize)]
 pub enum StoredValueV1 {
-    Inline {
-        bytes: Vec<u8>,
-    },
-    BlobRef {
-        rel_path: String,
-        len: u64,
-        checksum: u32,
-    },
+    Inline { bytes: Vec<u8> },
 }
 
 impl RecordEnvelope {

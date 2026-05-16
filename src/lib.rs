@@ -1,4 +1,3 @@
-mod blob_store;
 mod cache;
 mod codec;
 mod envelope;
